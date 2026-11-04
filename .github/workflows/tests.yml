@@ -27,5 +27,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install -e "./minitopol-dependency" pytest
+      - run: python -m pip install -e "./minitopol-dependency[acceleration]" pytest
       - run: python -m pytest -q tests/test_e2e.py
