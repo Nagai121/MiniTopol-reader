@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: Nagai121/MiniTopol
-          ref: feature/provider-reader-v1
+          ref: main
           path: minitopol-dependency
       - uses: actions/setup-python@v5
         with:
