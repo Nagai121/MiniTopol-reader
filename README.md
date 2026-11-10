@@ -21,7 +21,7 @@ python reader.py get 軌跡ID --data coords,all --start 0 --stop 100
 python reader.py release リースID
 ~~~
 
-データは共有メモリに置かれ、getは領域の名前・型・形状を返します。使用後は必ずreleaseします。起動済みProviderには自動接続し、未起動なら登録済みのMiniTopol環境から起動します。
+データは共有メモリに置かれ、getは領域の名前・型・形状を返します。使用後は必ずreleaseします。 `stop`はProviderの停止処理と登録セッションの解除を待ってから戻るため、直後に`start`できます。稼働中のleaseがある場合は停止を拒否します。起動済みProviderには自動接続し、未起動なら登録済みのMiniTopol環境から起動します。
 
 ## Pythonからの取得
 
@@ -45,3 +45,6 @@ Reader自身はnumpy・pyarrowに依存しません。ndarrayとArrow論理表�
 Providerの保存形式・復元アルゴリズムはMiniTopol側の責務です。Readerは保存形式を解釈しません。共有領域は原則としてゼロコピーで参照しますが、Provider内部での復元や要求に合わせた整列ではコピーが発生し得ます。
 
 パフォーマンス目標の50億AF/分は検証前であり、達成を保証するものではありません。
+
+For a known next batch of descriptor frames, pass `next_frames=[...]` to
+`Reader.request()`. Use this hint with an updated MiniTopol Provider.

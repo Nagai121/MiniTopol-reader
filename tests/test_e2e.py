@@ -63,3 +63,20 @@ def test_reader_to_real_provider_from_unrelated_directory(tmp_path, monkeypatch)
         assert client.status()["cache_hits"] >= 1
     finally:
         client.stop()
+
+
+def test_immediate_stop_restart_is_ready(tmp_path, monkeypatch):
+    import json
+    ws = Workspace(tmp_path / "restart-storage")
+    registration = tmp_path / "restart-provider.json"
+    monkeypatch.setenv("MINITOPOL_PROVIDER_REGISTRY", str(registration))
+    register(ws.path)
+    client = Reader()
+    try:
+        for _ in range(5):
+            assert client.start()["protocol"] == 1
+            assert client.stop()["stopping"]
+            assert "session" not in json.loads(registration.read_text(encoding="utf-8"))
+    finally:
+        if client.status().get("running") is not False:
+            client.stop()

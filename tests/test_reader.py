@@ -11,6 +11,42 @@ import pytest
 from reader import Reader, ReaderError
 
 
+def test_registry_retries_transient_access_failure(monkeypatch):
+    import reader
+
+    class Registry:
+        attempts = 0
+
+        def is_file(self):
+            return True
+
+        def read_text(self, **kwargs):
+            self.attempts += 1
+            if self.attempts < 3:
+                raise PermissionError('transient replacement')
+            return '{"schema":1}'
+
+    registry = Registry()
+    monkeypatch.setattr(reader, 'registry_path', lambda: registry)
+    assert reader._registry() == {'schema': 1}
+    assert registry.attempts == 3
+
+
+def test_registry_permanent_access_failure_is_reported(monkeypatch):
+    import reader
+
+    class Registry:
+        def is_file(self):
+            return True
+
+        def read_text(self, **kwargs):
+            raise PermissionError('permanent denial')
+
+    monkeypatch.setattr(reader, 'registry_path', lambda: Registry())
+    with pytest.raises(ReaderError, match='remains inaccessible'):
+        reader._registry()
+
+
 class FakeHandler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
@@ -34,6 +70,9 @@ class FakeHandler(BaseHTTPRequestHandler):
             result = {"released": value["lease"] == "abc"}
         else:
             result = {"stopping": True}
+            config = json.loads(self.server.registry_path.read_text())
+            config.pop("session", None)
+            self.server.registry_path.write_text(json.dumps(config))
         self.send_json(result)
 
     def send_json(self, obj):
@@ -52,6 +91,7 @@ def server(tmp_path, monkeypatch):
     path = tmp_path / "registered.json"
     path.write_text(json.dumps({"schema": 1,
         "session": {"port": http.server_port, "token": "test-token", "pid": 999}}))
+    http.registry_path = path
     monkeypatch.setenv("MINITOPOL_PROVIDER_REGISTRY", str(path))
     try:
         yield http
@@ -100,3 +140,32 @@ def test_no_registration(tmp_path, monkeypatch):
     monkeypatch.setenv("MINITOPOL_PROVIDER_REGISTRY", str(tmp_path / "missing.json"))
     with pytest.raises(ReaderError, match="not registered"):
         Reader().list()
+
+
+def test_stop_waits_until_old_session_is_removed(monkeypatch):
+    import reader
+    session = {"pid": 999, "port": 1234, "token": "test"}
+    remaining = iter([{"session": session}, {"session": session}, {}])
+    waits = []
+    monkeypatch.setattr(reader, "_session", lambda **kwargs: session)
+    monkeypatch.setattr(reader, "_send", lambda *args: {"stopping": True})
+    monkeypatch.setattr(reader, "_registry", lambda: next(remaining))
+    monkeypatch.setattr(reader.time, "sleep", waits.append)
+    assert reader.Reader().stop() == {"stopping": True}
+    assert waits == [0.05, 0.05]
+
+
+def test_next_frames_hint_is_optional(monkeypatch):
+    import reader
+
+    payloads = []
+    monkeypatch.setattr(reader, '_session', lambda: {})
+    def send(session, path, payload, timeout):
+        payloads.append(payload)
+        return {'lease': 'hint', 'buffers': []}
+    monkeypatch.setattr(reader, '_send', send)
+    client = Reader()
+    client.request('trajectory', data=['ramachandran'], frames=[2, 0])
+    client.request('trajectory', data=['ramachandran'], frames=[2, 0], next_frames=[1, 3])
+    assert 'next_frames' not in payloads[0]
+    assert payloads[1]['next_frames'] == [1, 3]

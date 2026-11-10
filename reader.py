@@ -25,7 +25,18 @@ def _registry():
     path = registry_path()
     if not path.is_file():
         raise ReaderError("MiniTopol Provider is not registered. Run: python -m minitopol.provider register")
-    config = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+    except PermissionError:
+        deadline = time.monotonic() + 2.0
+        while True:
+            try:
+                config = json.loads(path.read_text(encoding="utf-8"))
+                break
+            except PermissionError as error:
+                if time.monotonic() >= deadline:
+                    raise ReaderError("Provider registry remains inaccessible") from error
+                time.sleep(0.01)
     if config.get("schema") != 1:
         raise ReaderError("Incompatible Provider registry version")
     return config
@@ -179,7 +190,7 @@ class Reader:
     def list(self):
         return _send(_session(), "list")
 
-    def request(self, trajectory, *, data=("coords",), frames=None, start=None, stop=None, atoms=None):
+    def request(self, trajectory, *, data=("coords",), frames=None, start=None, stop=None, atoms=None, next_frames=None):
         if isinstance(data, str):
             data = [x.strip() for x in data.split(",") if x.strip()]
         if not isinstance(data, (tuple, list)):
@@ -196,13 +207,25 @@ class Reader:
             payload["stop"] = stop
         if atoms is not None:
             payload["atoms"] = list(atoms)
+        if next_frames is not None:
+            payload["next_frames"] = list(next_frames)
         return Lease(self, _send(_session(), "get", payload, timeout=300))
 
     def release(self, lease):
         return _send(_session(), "release", {"lease": lease})
 
     def stop(self):
-        return _send(_session(autostart=False), "stop", {})
+        session = _session(autostart=False)
+        result = _send(session, "stop", {})
+        # The HTTP response acknowledges shutdown, but the old server may
+        # still answer a liveness probe while releasing its cache and lock.
+        # Wait for its registration to be removed before allowing restart.
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if _registry().get("session") != session:
+                return result
+            time.sleep(0.05)
+        raise ReaderError("Provider did not finish stopping")
 
 
 def _indices(value):
