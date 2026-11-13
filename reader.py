@@ -242,6 +242,9 @@ class Reader:
     def prune_storage(self, *, all_cache=False):
         return _send(_session(), "storage/prune", {"all_cache": all_cache}, timeout=300)
 
+    def ingest_sources(self, trajectory):
+        return _send(_session(), "storage/ingest", {"trajectory": trajectory}, timeout=7200)
+
     def plan_batches(self, batches):
         """Order is owned by the caller; only storage prefetch may run ahead."""
         return _send(_session(), "batches/plan", {"batches": batches})
@@ -278,8 +281,28 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="reader.py", description="Request MiniTopol data from the local shared Provider.")
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("start", "status", "list", "stop"):
+    for name in ("start", "status", "list", "stop", "storage-status"):
         commands.add_parser(name)
+    config = commands.add_parser("storage-configure")
+    config.add_argument("--external")
+    toggle = config.add_mutually_exclusive_group()
+    toggle.add_argument("--enable", action="store_true")
+    toggle.add_argument("--disable", action="store_true")
+    config.add_argument("--cache-percent", type=float)
+    config.add_argument("--write-policy", choices=["longevity", "balanced", "throughput"])
+    config.add_argument("--prefetch-batches", type=int)
+    offload = commands.add_parser("storage-offload")
+    offload.add_argument("relative")
+    prune = commands.add_parser("storage-prune")
+    prune.add_argument("--all", action="store_true")
+    ingest = commands.add_parser("storage-ingest")
+    ingest.add_argument("trajectory")
+    plan = commands.add_parser("batches-plan")
+    plan.add_argument("json_file", help="JSON file containing the ordered batch list")
+    plan_status = commands.add_parser("batches-status")
+    plan_status.add_argument("plan_id")
+    cancel = commands.add_parser("batches-cancel")
+    cancel.add_argument("plan_id")
     get = commands.add_parser("get")
     get.add_argument("trajectory")
     get.add_argument("--data", default="coords", help="coords, all, or comma-separated descriptors")
@@ -287,13 +310,36 @@ def main(argv=None):
     get.add_argument("--start", type=int)
     get.add_argument("--stop", type=int)
     get.add_argument("--atoms", type=_indices)
+    get.add_argument("--plan-id")
+    get.add_argument("--plan-index", type=int)
     release = commands.add_parser("release")
     release.add_argument("lease")
     args = parser.parse_args(argv)
     client = Reader()
     if args.command == "get":
         result = client.request(args.trajectory, data=args.data, frames=args.frames,
-                                start=args.start, stop=args.stop, atoms=args.atoms).metadata
+                                start=args.start, stop=args.stop, atoms=args.atoms,
+                                plan_id=args.plan_id, plan_index=args.plan_index).metadata
+    elif args.command == "storage-status":
+        result = client.storage_status()
+    elif args.command == "storage-configure":
+        result = client.configure_storage(
+            external_root=args.external,
+            enabled=True if args.enable else (False if args.disable else None),
+            cache_percent=args.cache_percent, write_policy=args.write_policy,
+            prefetch_batches=args.prefetch_batches)
+    elif args.command == "storage-offload":
+        result = client.offload(args.relative)
+    elif args.command == "storage-prune":
+        result = client.prune_storage(all_cache=args.all)
+    elif args.command == "storage-ingest":
+        result = client.ingest_sources(args.trajectory)
+    elif args.command == "batches-plan":
+        result = client.plan_batches(json.loads(Path(args.json_file).read_text(encoding="utf-8")))
+    elif args.command == "batches-status":
+        result = client.batch_status(args.plan_id)
+    elif args.command == "batches-cancel":
+        result = client.cancel_batches(args.plan_id)
     elif args.command == "release":
         result = client.release(args.lease)
     else:
