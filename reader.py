@@ -190,7 +190,10 @@ class Reader:
     def list(self):
         return _send(_session(), "list")
 
-    def request(self, trajectory, *, data=("coords",), frames=None, start=None, stop=None, atoms=None, next_frames=None):
+    @staticmethod
+    def batch_request(trajectory, *, data=("coords",), frames=None, start=None,
+                      stop=None, atoms=None, next_frames=None):
+        """Build one immutable batch specification for plan_batches/request."""
         if isinstance(data, str):
             data = [x.strip() for x in data.split(",") if x.strip()]
         if not isinstance(data, (tuple, list)):
@@ -209,7 +212,46 @@ class Reader:
             payload["atoms"] = list(atoms)
         if next_frames is not None:
             payload["next_frames"] = list(next_frames)
+        return payload
+
+    def request(self, trajectory, *, data=("coords",), frames=None, start=None,
+                stop=None, atoms=None, next_frames=None, plan_id=None, plan_index=None):
+        payload = self.batch_request(
+            trajectory, data=data, frames=frames, start=start, stop=stop,
+            atoms=atoms, next_frames=next_frames)
+        if plan_id is not None or plan_index is not None:
+            if not isinstance(plan_id, str) or type(plan_index) is not int:
+                raise ValueError("Both plan_id and integer plan_index are required")
+            payload.update(plan_id=plan_id, plan_index=plan_index)
         return Lease(self, _send(_session(), "get", payload, timeout=300))
+
+    def storage_status(self):
+        return _send(_session(), "storage/status")
+
+    def configure_storage(self, *, enabled=None, external_root=None, cache_percent=None,
+                          write_policy=None, prefetch_batches=None):
+        options = {"enabled": enabled, "external_root": external_root,
+                   "cache_percent": cache_percent, "write_policy": write_policy,
+                   "prefetch_batches": prefetch_batches}
+        return _send(_session(), "storage/configure",
+                     {k: v for k, v in options.items() if v is not None}, timeout=300)
+
+    def offload(self, relative):
+        return _send(_session(), "storage/offload", {"relative": relative}, timeout=7200)
+
+    def prune_storage(self, *, all_cache=False):
+        return _send(_session(), "storage/prune", {"all_cache": all_cache}, timeout=300)
+
+    def plan_batches(self, batches):
+        """Order is owned by the caller; only storage prefetch may run ahead."""
+        return _send(_session(), "batches/plan", {"batches": batches})
+
+    def batch_status(self, plan_id):
+        return _send(_session(), "batches/status", {"plan_id": plan_id})
+
+    def cancel_batches(self, plan_id):
+        return _send(_session(), "batches/cancel", {"plan_id": plan_id})
+
 
     def release(self, lease):
         return _send(_session(), "release", {"lease": lease})
