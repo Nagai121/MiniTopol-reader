@@ -239,6 +239,9 @@ class Reader:
     def offload(self, relative):
         return _send(_session(), "storage/offload", {"relative": relative}, timeout=7200)
 
+    def ensure_storage(self, relative):
+        return _send(_session(), "storage/ensure", {"relative": relative}, timeout=7200)
+
     def prune_storage(self, *, all_cache=False):
         return _send(_session(), "storage/prune", {"all_cache": all_cache}, timeout=300)
 
@@ -293,6 +296,8 @@ def main(argv=None):
     config.add_argument("--prefetch-batches", type=int)
     offload = commands.add_parser("storage-offload")
     offload.add_argument("relative")
+    ensure = commands.add_parser("storage-ensure")
+    ensure.add_argument("relative")
     prune = commands.add_parser("storage-prune")
     prune.add_argument("--all", action="store_true")
     ingest = commands.add_parser("storage-ingest")
@@ -330,6 +335,8 @@ def main(argv=None):
             prefetch_batches=args.prefetch_batches)
     elif args.command == "storage-offload":
         result = client.offload(args.relative)
+    elif args.command == "storage-ensure":
+        result = client.ensure_storage(args.relative)
     elif args.command == "storage-prune":
         result = client.prune_storage(all_cache=args.all)
     elif args.command == "storage-ingest":
