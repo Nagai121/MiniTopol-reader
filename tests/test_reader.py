@@ -169,3 +169,40 @@ def test_next_frames_hint_is_optional(monkeypatch):
     client.request('trajectory', data=['ramachandran'], frames=[2, 0], next_frames=[1, 3])
     assert 'next_frames' not in payloads[0]
     assert payloads[1]['next_frames'] == [1, 3]
+
+
+def test_multi_tier_api_and_ordered_batch_payload(monkeypatch):
+    import reader
+
+    calls = []
+    monkeypatch.setattr(reader, "_session", lambda: {})
+    def fake_send(session, path, payload=None, timeout=15):
+        calls.append((path, payload))
+        if path == "get":
+            return {"lease": "test", "buffers": [], "frames": payload["frames"]}
+        return {"accepted": True}
+    monkeypatch.setattr(reader, "_send", fake_send)
+    client = Reader()
+    batch = client.batch_request("test", data=["coords", "sasa"], frames=[3, 0])
+    assert batch == {"trajectory": "test", "coordinates": True,
+                     "descriptors": ["sasa"], "frames": [3, 0]}
+    client.configure_storage(enabled=True, external_root="/external",
+                             cache_percent=10, write_policy="longevity", prefetch_batches=2)
+    assert calls[-1][1]["prefetch_batches"] == 2
+    client.plan_batches([batch])
+    assert calls[-1] == ("batches/plan", {"batches": [batch]})
+    client.request("test", data=["coords", "sasa"], frames=[3, 0],
+                   plan_id="plan", plan_index=0)
+    assert calls[-1][1] == {**batch, "plan_id": "plan", "plan_index": 0}
+    client.storage_status()
+    assert calls[-1][0] == "storage/status"
+    client.offload("trajectories/test")
+    assert calls[-1][1]["relative"] == "trajectories/test"
+    client.ingest_sources("test")
+    assert calls[-1] == ("storage/ingest", {"trajectory": "test"})
+    client.prune_storage(all_cache=True)
+    assert calls[-1][0] == "storage/prune"
+    client.batch_status("plan")
+    assert calls[-1] == ("batches/status", {"plan_id": "plan"})
+    client.cancel_batches("plan")
+    assert calls[-1] == ("batches/cancel", {"plan_id": "plan"})
