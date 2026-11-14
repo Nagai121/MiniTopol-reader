@@ -229,10 +229,13 @@ class Reader:
         return _send(_session(), "storage/status")
 
     def configure_storage(self, *, enabled=None, external_root=None, cache_percent=None,
-                          write_policy=None, prefetch_batches=None):
+                          cache_limit_bytes=None, cache_slack_percent=None,
+                          cache_slack_bytes=None, write_policy=None, prefetch_batches=None):
         options = {"enabled": enabled, "external_root": external_root,
-                   "cache_percent": cache_percent, "write_policy": write_policy,
-                   "prefetch_batches": prefetch_batches}
+                   "cache_percent": cache_percent, "cache_limit_bytes": cache_limit_bytes,
+                   "cache_slack_percent": cache_slack_percent,
+                   "cache_slack_bytes": cache_slack_bytes,
+                   "write_policy": write_policy, "prefetch_batches": prefetch_batches}
         return _send(_session(), "storage/configure",
                      {k: v for k, v in options.items() if v is not None}, timeout=300)
 
@@ -291,7 +294,11 @@ def main(argv=None):
     toggle = config.add_mutually_exclusive_group()
     toggle.add_argument("--enable", action="store_true")
     toggle.add_argument("--disable", action="store_true")
-    config.add_argument("--cache-percent", type=float)
+    budget = config.add_mutually_exclusive_group()
+    budget.add_argument("--cache-percent", type=float)
+    budget.add_argument("--cache-limit-gib", type=float)
+    config.add_argument("--cache-slack-percent", type=float)
+    config.add_argument("--cache-slack-gib", type=float)
     config.add_argument("--write-policy", choices=["longevity", "balanced", "throughput"])
     config.add_argument("--prefetch-batches", type=int)
     offload = commands.add_parser("storage-offload")
@@ -328,11 +335,21 @@ def main(argv=None):
     elif args.command == "storage-status":
         result = client.storage_status()
     elif args.command == "storage-configure":
+        import math
+        for name, value in (("--cache-limit-gib", args.cache_limit_gib),
+                            ("--cache-slack-gib", args.cache_slack_gib)):
+            if value is not None and (not math.isfinite(value) or value < 0):
+                parser.error(f"{name} must be a nonnegative finite number")
         result = client.configure_storage(
             external_root=args.external,
             enabled=True if args.enable else (False if args.disable else None),
-            cache_percent=args.cache_percent, write_policy=args.write_policy,
-            prefetch_batches=args.prefetch_batches)
+            cache_percent=args.cache_percent,
+            cache_limit_bytes=(round(args.cache_limit_gib * 1024**3)
+                               if args.cache_limit_gib is not None else None),
+            cache_slack_percent=args.cache_slack_percent,
+            cache_slack_bytes=(round(args.cache_slack_gib * 1024**3)
+                               if args.cache_slack_gib is not None else None),
+            write_policy=args.write_policy, prefetch_batches=args.prefetch_batches)
     elif args.command == "storage-offload":
         result = client.offload(args.relative)
     elif args.command == "storage-ensure":
