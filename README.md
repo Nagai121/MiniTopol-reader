@@ -103,3 +103,32 @@ ATLASの新規取得元データのみを外付けドライブへ保存する場
 `python reader.py storage-configure --external /media/external --atlas-source-tier external`
 と設定します。変換後のA表現と記述子は内部SSDに保存します。既存の取得データは
 自動移動されず、ATLASの取得台帳が保存済みデータの所在を保持します。
+
+
+## Provider管理のRAM→VRAM転送
+
+GPUメモリへの転送・保持・解放はMiniTopol Providerだけが担当します。
+ReaderはCUDA・PyTorch・CuPyなどを読み込まず、要求と応答を中継します。
+
+~~~python
+from reader import Reader
+
+client = Reader()
+with client.request("trajectory-id", data=["coords", "sasa"], frames=[0, 4, 8]) as source:
+    gpu = client.upload_vram(source.metadata["lease"], device=0)
+# コピーはProviderが同期済みなので、ここではRAM Leaseは解放済みです。
+print(gpu["vram_lease"], gpu["allocated_bytes"])
+client.release_vram(gpu["vram_lease"])
+~~~
+
+指定した一部のバッファだけ転送する場合は
+`client.upload_vram(source.metadata["lease"], buffers=["coordinates"])`
+です。CLIからは
+`python reader.py vram-upload RAM_LEASE --buffers coordinates --device 0`、
+`python reader.py vram-status`、
+`python reader.py vram-release VRAM_LEASE` を使用します。
+
+返されるIDはProvider内部のVRAM Leaseであり、CUDAポインタや別プロセスから
+直接参照できるGPUテンソルではありません。VRAM上のデータを別プロセスの学習器へ
+渡すためのCUDA IPC契約は、この機能には含まれません。Arrow記述子はGPU上でも
+Arrow IPCのバイト列として保持されます。

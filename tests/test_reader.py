@@ -235,3 +235,45 @@ def test_reader_configures_atlas_raw_storage_destination(monkeypatch):
                         sent.append((path, payload)) or {"ok": True})
     Reader().configure_storage(atlas_source_tier="external")
     assert sent[-1] == ("storage/configure", {"atlas_source_tier": "external"})
+
+
+def test_vram_commands_only_send_provider_requests(monkeypatch):
+    """Reader does not import or allocate GPU arrays."""
+    import reader
+    calls = []
+    monkeypatch.setattr(reader, "_session", lambda: {"token": "dummy"})
+    monkeypatch.setattr(reader, "_send", lambda _session, path, payload=None, timeout=15:
+                        calls.append((path, payload, timeout)) or {"ok": True})
+    client = Reader()
+    assert client.upload_vram("cpu-lease", device=1)["ok"]
+    assert calls[-1] == ("vram/upload", {"lease": "cpu-lease", "device": 1}, 300)
+    assert client.upload_vram("cpu-lease", buffers=["coordinates", "time"])["ok"]
+    assert calls[-1] == ("vram/upload", {
+        "lease": "cpu-lease", "device": 0, "buffers": ["coordinates", "time"]}, 300)
+    assert client.release_vram("gpu-lease")["ok"]
+    assert calls[-1] == ("vram/release", {"vram_lease": "gpu-lease"}, 15)
+    assert client.vram_status()["ok"]
+    assert calls[-1] == ("vram/status", None, 15)
+
+
+def test_vram_cli_only_forwards_tokens(monkeypatch, capsys):
+    import reader
+    commands = []
+    class FakeReader:
+        def upload_vram(self, lease, *, buffers=None, device=0):
+            commands.append(("upload", lease, buffers, device))
+            return {"vram_lease": "id"}
+        def release_vram(self, lease):
+            commands.append(("release", lease))
+            return {"released": True}
+        def vram_status(self):
+            commands.append(("status",))
+            return {"active_leases": 0}
+    monkeypatch.setattr(reader, "Reader", FakeReader)
+    assert reader.main(["vram-upload", "ram-id", "--buffers", "coordinates,time",
+                        "--device", "1"]) == 0
+    assert reader.main(["vram-release", "vram-id"]) == 0
+    assert reader.main(["vram-status"]) == 0
+    assert commands == [("upload", "ram-id", ["coordinates", "time"], 1),
+                        ("release", "vram-id"), ("status",)]
+    assert len(capsys.readouterr().out.splitlines()) == 3
