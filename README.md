@@ -59,6 +59,8 @@ Readerはこれまでと同じ単一ファイルの接続クライアントで�
 ~~~bash
 python reader.py storage-status
 python reader.py storage-configure --external /media/external --enable --cache-percent 10
+python reader.py storage-configure --cache-percent 40 --cache-slack-percent 15
+python reader.py storage-configure --cache-limit-gib 2 --cache-slack-gib 0.5
 python reader.py storage-configure --write-policy longevity --prefetch-batches 2
 python reader.py storage-ingest TRAJECTORY
 python reader.py storage-offload trajectories/TRAJECTORY
@@ -90,3 +92,9 @@ with client.request("trajectory-A", data=["coords", "all"], frames=[3, 0],
 
 学習側はバッチの供給順序を指定し、Providerは先行準備を行います。
 Providerで設定した先行バッチ数を越えて内部補助へ転送しません。
+
+容量設定は内部補助の一時キャッシュに適用されます。初期の割合指定は起動時の
+空き容量の10%ですが、割合は10%を超えて指定できます。容量の絶対値は
+`cache_limit_bytes`（CLIは`--cache-limit-gib`）で指定します。
+軟制限の追加許容量は`cache_slack_percent`と`cache_slack_bytes`で設定でき、
+超過が必要なときも外部直接読み出しに切り替えて保存可能容量を守ります。
