@@ -225,6 +225,19 @@ class Reader:
             payload.update(plan_id=plan_id, plan_index=plan_index)
         return Lease(self, _send(_session(), "get", payload, timeout=300))
 
+    def upload_vram(self, ram_lease, *, buffers=None, device=0):
+        """Request Provider-owned native CUDA upload; no GPU code lives here."""
+        payload = {"lease": ram_lease, "device": device}
+        if buffers is not None:
+            payload["buffers"] = list(buffers)
+        return _send(_session(), "vram/upload", payload, timeout=300)
+
+    def release_vram(self, vram_lease):
+        return _send(_session(), "vram/release", {"vram_lease": vram_lease})
+
+    def vram_status(self):
+        return _send(_session(), "vram/status")
+
     def storage_status(self):
         return _send(_session(), "storage/status")
 
@@ -289,8 +302,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="reader.py", description="Request MiniTopol data from the local shared Provider.")
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("start", "status", "list", "stop", "storage-status"):
+    for name in ("start", "status", "list", "stop", "storage-status", "vram-status"):
         commands.add_parser(name)
+    upload = commands.add_parser("vram-upload")
+    upload.add_argument("lease", help="Active RAM lease from get")
+    upload.add_argument("--buffers", help="Comma-separated buffer names; default all")
+    upload.add_argument("--device", type=int, default=0)
+    gpu_release = commands.add_parser("vram-release")
+    gpu_release.add_argument("vram_lease")
     config = commands.add_parser("storage-configure")
     config.add_argument("--external")
     toggle = config.add_mutually_exclusive_group()
@@ -335,6 +354,15 @@ def main(argv=None):
         result = client.request(args.trajectory, data=args.data, frames=args.frames,
                                 start=args.start, stop=args.stop, atoms=args.atoms,
                                 plan_id=args.plan_id, plan_index=args.plan_index).metadata
+    elif args.command == "vram-upload":
+        result = client.upload_vram(
+            args.lease,
+            buffers=args.buffers.split(",") if args.buffers is not None else None,
+            device=args.device)
+    elif args.command == "vram-release":
+        result = client.release_vram(args.vram_lease)
+    elif args.command == "vram-status":
+        result = client.vram_status()
     elif args.command == "storage-status":
         result = client.storage_status()
     elif args.command == "storage-configure":
