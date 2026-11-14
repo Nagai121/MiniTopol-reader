@@ -98,3 +98,8 @@ Providerで設定した先行バッチ数を越えて内部補助へ転送しま
 `cache_limit_bytes`（CLIは`--cache-limit-gib`）で指定します。
 軟制限の追加許容量は`cache_slack_percent`と`cache_slack_bytes`で設定でき、
 超過が必要なときも外部直接読み出しに切り替えて保存可能容量を守ります。
+
+ATLASの新規取得元データのみを外付けドライブへ保存する場合は、
+`python reader.py storage-configure --external /media/external --atlas-source-tier external`
+と設定します。変換後のA表現と記述子は内部SSDに保存します。既存の取得データは
+自動移動されず、ATLASの取得台帳が保存済みデータの所在を保持します。

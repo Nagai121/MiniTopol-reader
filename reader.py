@@ -230,12 +230,14 @@ class Reader:
 
     def configure_storage(self, *, enabled=None, external_root=None, cache_percent=None,
                           cache_limit_bytes=None, cache_slack_percent=None,
-                          cache_slack_bytes=None, write_policy=None, prefetch_batches=None):
+                          cache_slack_bytes=None, write_policy=None, prefetch_batches=None,
+                          atlas_source_tier=None):
         options = {"enabled": enabled, "external_root": external_root,
                    "cache_percent": cache_percent, "cache_limit_bytes": cache_limit_bytes,
                    "cache_slack_percent": cache_slack_percent,
                    "cache_slack_bytes": cache_slack_bytes,
-                   "write_policy": write_policy, "prefetch_batches": prefetch_batches}
+                   "write_policy": write_policy, "prefetch_batches": prefetch_batches,
+                   "atlas_source_tier": atlas_source_tier}
         return _send(_session(), "storage/configure",
                      {k: v for k, v in options.items() if v is not None}, timeout=300)
 
@@ -300,6 +302,7 @@ def main(argv=None):
     config.add_argument("--cache-slack-percent", type=float)
     config.add_argument("--cache-slack-gib", type=float)
     config.add_argument("--write-policy", choices=["longevity", "balanced", "throughput"])
+    config.add_argument("--atlas-source-tier", choices=["internal", "external"])
     config.add_argument("--prefetch-batches", type=int)
     offload = commands.add_parser("storage-offload")
     offload.add_argument("relative")
@@ -349,7 +352,8 @@ def main(argv=None):
             cache_slack_percent=args.cache_slack_percent,
             cache_slack_bytes=(round(args.cache_slack_gib * 1024**3)
                                if args.cache_slack_gib is not None else None),
-            write_policy=args.write_policy, prefetch_batches=args.prefetch_batches)
+            write_policy=args.write_policy, prefetch_batches=args.prefetch_batches,
+            atlas_source_tier=args.atlas_source_tier)
     elif args.command == "storage-offload":
         result = client.offload(args.relative)
     elif args.command == "storage-ensure":

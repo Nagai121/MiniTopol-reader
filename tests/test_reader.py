@@ -225,3 +225,13 @@ def test_reader_capacity_budget_fields(monkeypatch):
     })
     client.configure_storage(cache_percent=40)
     assert sent[-1] == ("storage/configure", {"cache_percent": 40})
+
+
+def test_reader_configures_atlas_raw_storage_destination(monkeypatch):
+    import reader
+    sent = []
+    monkeypatch.setattr(reader, "_session", lambda: {})
+    monkeypatch.setattr(reader, "_send", lambda _session, path, payload=None, timeout=15:
+                        sent.append((path, payload)) or {"ok": True})
+    Reader().configure_storage(atlas_source_tier="external")
+    assert sent[-1] == ("storage/configure", {"atlas_source_tier": "external"})
