@@ -206,3 +206,22 @@ def test_multi_tier_api_and_ordered_batch_payload(monkeypatch):
     assert calls[-1] == ("batches/status", {"plan_id": "plan"})
     client.cancel_batches("plan")
     assert calls[-1] == ("batches/cancel", {"plan_id": "plan"})
+
+
+def test_reader_capacity_budget_fields(monkeypatch):
+    import reader
+    sent = []
+    monkeypatch.setattr(reader, "_session", lambda: {})
+    monkeypatch.setattr(reader, "_send", lambda _session, path, payload=None, timeout=15:
+                        sent.append((path, payload)) or {"ok": True})
+    client = Reader()
+    client.configure_storage(cache_limit_bytes=2 * 1024**3,
+                             cache_slack_percent=25.0,
+                             cache_slack_bytes=512 * 1024**2)
+    assert sent[-1] == ("storage/configure", {
+        "cache_limit_bytes": 2 * 1024**3,
+        "cache_slack_percent": 25.0,
+        "cache_slack_bytes": 512 * 1024**2,
+    })
+    client.configure_storage(cache_percent=40)
+    assert sent[-1] == ("storage/configure", {"cache_percent": 40})
