@@ -190,7 +190,10 @@ class Reader:
     def list(self):
         return _send(_session(), "list")
 
-    def request(self, trajectory, *, data=("coords",), frames=None, start=None, stop=None, atoms=None, next_frames=None):
+    @staticmethod
+    def batch_request(trajectory, *, data=("coords",), frames=None, start=None,
+                      stop=None, atoms=None, next_frames=None):
+        """Build one immutable batch specification for plan_batches/request."""
         if isinstance(data, str):
             data = [x.strip() for x in data.split(",") if x.strip()]
         if not isinstance(data, (tuple, list)):
@@ -209,7 +212,55 @@ class Reader:
             payload["atoms"] = list(atoms)
         if next_frames is not None:
             payload["next_frames"] = list(next_frames)
+        return payload
+
+    def request(self, trajectory, *, data=("coords",), frames=None, start=None,
+                stop=None, atoms=None, next_frames=None, plan_id=None, plan_index=None):
+        payload = self.batch_request(
+            trajectory, data=data, frames=frames, start=start, stop=stop,
+            atoms=atoms, next_frames=next_frames)
+        if plan_id is not None or plan_index is not None:
+            if not isinstance(plan_id, str) or type(plan_index) is not int:
+                raise ValueError("Both plan_id and integer plan_index are required")
+            payload.update(plan_id=plan_id, plan_index=plan_index)
         return Lease(self, _send(_session(), "get", payload, timeout=300))
+
+    def storage_status(self):
+        return _send(_session(), "storage/status")
+
+    def configure_storage(self, *, enabled=None, external_root=None, cache_percent=None,
+                          cache_limit_bytes=None, cache_slack_percent=None,
+                          cache_slack_bytes=None, write_policy=None, prefetch_batches=None):
+        options = {"enabled": enabled, "external_root": external_root,
+                   "cache_percent": cache_percent, "cache_limit_bytes": cache_limit_bytes,
+                   "cache_slack_percent": cache_slack_percent,
+                   "cache_slack_bytes": cache_slack_bytes,
+                   "write_policy": write_policy, "prefetch_batches": prefetch_batches}
+        return _send(_session(), "storage/configure",
+                     {k: v for k, v in options.items() if v is not None}, timeout=300)
+
+    def offload(self, relative):
+        return _send(_session(), "storage/offload", {"relative": relative}, timeout=7200)
+
+    def ensure_storage(self, relative):
+        return _send(_session(), "storage/ensure", {"relative": relative}, timeout=7200)
+
+    def prune_storage(self, *, all_cache=False):
+        return _send(_session(), "storage/prune", {"all_cache": all_cache}, timeout=300)
+
+    def ingest_sources(self, trajectory):
+        return _send(_session(), "storage/ingest", {"trajectory": trajectory}, timeout=7200)
+
+    def plan_batches(self, batches):
+        """Order is owned by the caller; only storage prefetch may run ahead."""
+        return _send(_session(), "batches/plan", {"batches": batches})
+
+    def batch_status(self, plan_id):
+        return _send(_session(), "batches/status", {"plan_id": plan_id})
+
+    def cancel_batches(self, plan_id):
+        return _send(_session(), "batches/cancel", {"plan_id": plan_id})
+
 
     def release(self, lease):
         return _send(_session(), "release", {"lease": lease})
@@ -236,8 +287,34 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="reader.py", description="Request MiniTopol data from the local shared Provider.")
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("start", "status", "list", "stop"):
+    for name in ("start", "status", "list", "stop", "storage-status"):
         commands.add_parser(name)
+    config = commands.add_parser("storage-configure")
+    config.add_argument("--external")
+    toggle = config.add_mutually_exclusive_group()
+    toggle.add_argument("--enable", action="store_true")
+    toggle.add_argument("--disable", action="store_true")
+    budget = config.add_mutually_exclusive_group()
+    budget.add_argument("--cache-percent", type=float)
+    budget.add_argument("--cache-limit-gib", type=float)
+    config.add_argument("--cache-slack-percent", type=float)
+    config.add_argument("--cache-slack-gib", type=float)
+    config.add_argument("--write-policy", choices=["longevity", "balanced", "throughput"])
+    config.add_argument("--prefetch-batches", type=int)
+    offload = commands.add_parser("storage-offload")
+    offload.add_argument("relative")
+    ensure = commands.add_parser("storage-ensure")
+    ensure.add_argument("relative")
+    prune = commands.add_parser("storage-prune")
+    prune.add_argument("--all", action="store_true")
+    ingest = commands.add_parser("storage-ingest")
+    ingest.add_argument("trajectory")
+    plan = commands.add_parser("batches-plan")
+    plan.add_argument("json_file", help="JSON file containing the ordered batch list")
+    plan_status = commands.add_parser("batches-status")
+    plan_status.add_argument("plan_id")
+    cancel = commands.add_parser("batches-cancel")
+    cancel.add_argument("plan_id")
     get = commands.add_parser("get")
     get.add_argument("trajectory")
     get.add_argument("--data", default="coords", help="coords, all, or comma-separated descriptors")
@@ -245,13 +322,48 @@ def main(argv=None):
     get.add_argument("--start", type=int)
     get.add_argument("--stop", type=int)
     get.add_argument("--atoms", type=_indices)
+    get.add_argument("--plan-id")
+    get.add_argument("--plan-index", type=int)
     release = commands.add_parser("release")
     release.add_argument("lease")
     args = parser.parse_args(argv)
     client = Reader()
     if args.command == "get":
         result = client.request(args.trajectory, data=args.data, frames=args.frames,
-                                start=args.start, stop=args.stop, atoms=args.atoms).metadata
+                                start=args.start, stop=args.stop, atoms=args.atoms,
+                                plan_id=args.plan_id, plan_index=args.plan_index).metadata
+    elif args.command == "storage-status":
+        result = client.storage_status()
+    elif args.command == "storage-configure":
+        import math
+        for name, value in (("--cache-limit-gib", args.cache_limit_gib),
+                            ("--cache-slack-gib", args.cache_slack_gib)):
+            if value is not None and (not math.isfinite(value) or value < 0):
+                parser.error(f"{name} must be a nonnegative finite number")
+        result = client.configure_storage(
+            external_root=args.external,
+            enabled=True if args.enable else (False if args.disable else None),
+            cache_percent=args.cache_percent,
+            cache_limit_bytes=(round(args.cache_limit_gib * 1024**3)
+                               if args.cache_limit_gib is not None else None),
+            cache_slack_percent=args.cache_slack_percent,
+            cache_slack_bytes=(round(args.cache_slack_gib * 1024**3)
+                               if args.cache_slack_gib is not None else None),
+            write_policy=args.write_policy, prefetch_batches=args.prefetch_batches)
+    elif args.command == "storage-offload":
+        result = client.offload(args.relative)
+    elif args.command == "storage-ensure":
+        result = client.ensure_storage(args.relative)
+    elif args.command == "storage-prune":
+        result = client.prune_storage(all_cache=args.all)
+    elif args.command == "storage-ingest":
+        result = client.ingest_sources(args.trajectory)
+    elif args.command == "batches-plan":
+        result = client.plan_batches(json.loads(Path(args.json_file).read_text(encoding="utf-8")))
+    elif args.command == "batches-status":
+        result = client.batch_status(args.plan_id)
+    elif args.command == "batches-cancel":
+        result = client.cancel_batches(args.plan_id)
     elif args.command == "release":
         result = client.release(args.lease)
     else:
